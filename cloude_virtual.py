@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import math
 
-NUM_PARTITE = 100
+NUM_PARTITE = 10
 
 class GeneratoreQuoteCalcioVirtuale:
     def __init__(self, margine_operatore=0.10):
@@ -506,15 +506,15 @@ if __name__ == "__main__":
     
     # Mostra informazioni sulle squadre
     print("CAMPIONATO VIRTUALE - SQUADRE:")
-    #print(generatore.squadre_virtuali[['nome', 'attacco', 'difesa', 'forma']])
+    print(generatore.squadre_virtuali[['nome', 'attacco', 'difesa', 'forma']])
     print("\n")
     
     # Genera un calendario di partite virtuali
     calendario = generatore.genera_calendario_virtuale(num_partite=NUM_PARTITE)
     
     print("CALENDARIO PARTITE VIRTUALI:")
-    #print(calendario[['id', 'data_ora', 'squadra_casa', 'squadra_trasferta', 
-    #                 'quota_1', 'quota_X', 'quota_2']].to_string(index=False))
+    print(calendario[['id', 'data_ora', 'squadra_casa', 'squadra_trasferta', 
+                     'quota_1', 'quota_X', 'quota_2']].to_string(index=False))
     print("\n")
     
     # Mostra quote aggiuntive per la prima partita
@@ -549,8 +549,8 @@ if __name__ == "__main__":
     risultati = generatore.simula_giornata_completa(calendario)
     
     print("RISULTATI SIMULATI:")
-    #print(risultati[['id', 'squadra_casa', 'squadra_trasferta', 'gol_casa', 'gol_trasferta', 
-    #                'risultato', 'under_over', 'goal_nogoal', 'risultato_esatto']].to_string(index=False))
+    print(risultati[['id', 'squadra_casa', 'squadra_trasferta', 'gol_casa', 'gol_trasferta', 
+                    'risultato', 'under_over', 'goal_nogoal', 'risultato_esatto']].to_string(index=False))
     print("\n")
     
     # Calcola payout percentuale medio
