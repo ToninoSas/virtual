@@ -2,6 +2,9 @@ import random
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
+import math
+
+NUM_PARTITE = 100
 
 class GeneratoreQuoteCalcioVirtuale:
     def __init__(self, margine_operatore=0.10):
@@ -12,8 +15,9 @@ class GeneratoreQuoteCalcioVirtuale:
         """
         self.margine_operatore = margine_operatore
         self.squadre_virtuali = self._crea_squadre_virtuali()
+        self.NUM_AZIONI_MAX = 6
         
-    def _crea_squadre_virtuali(self, num_squadre=20):
+    def _crea_squadre_virtuali(self, num_squadre=10):
         """
         Crea un database di squadre virtuali con forza relativa
         
@@ -146,6 +150,10 @@ class GeneratoreQuoteCalcioVirtuale:
             prob_con_margine = prob / (1 + self.margine_operatore)
             # Converti in quota europea (1/p) e arrotonda a 2 decimali
             quote[risultato] = round(1 / prob_con_margine, 2)
+
+            # Limita la quota massima
+           # quota_massima = 2.5
+            #quote[risultato] = min(quote[risultato], quota_massima)
         
         return quote
     
@@ -231,6 +239,144 @@ class GeneratoreQuoteCalcioVirtuale:
             'NoGoal': round(1 / prob_nogoal_con_margine, 2)
         }
     
+    def calcola_quote_risultato_esatto(self, id_casa, id_trasferta):
+        """
+        Calcola le quote per i risultati esatti rispettando il vincolo di massimo 6 azioni totali
+        
+        :param id_casa: indice della squadra di casa
+        :param id_trasferta: indice della squadra in trasferta
+        :return: dizionario con quote per risultati esatti
+        """
+        # Recupera caratteristiche delle squadre
+        squadra_casa = self.squadre_virtuali.iloc[id_casa]
+        squadra_trasferta = self.squadre_virtuali.iloc[id_trasferta]
+        
+        # Calcola potenziale offensivo contro difensivo
+        off_vs_dif_casa = squadra_casa['attacco'] / squadra_trasferta['difesa']
+        off_vs_dif_trasferta = squadra_trasferta['attacco'] / squadra_casa['difesa']
+        
+        # Aggiungi effetto della forma
+        off_vs_dif_casa *= (squadra_casa['forma'] / 85)
+        off_vs_dif_trasferta *= (squadra_trasferta['forma'] / 85)
+        
+        # Calcola la forza relativa per distribuire le azioni
+        forza_casa = off_vs_dif_casa * 1.4
+        forza_trasferta = off_vs_dif_trasferta * 1.1
+        forza_totale = forza_casa + forza_trasferta
+        
+        # Dizionario per memorizzare le probabilità e quote dei risultati esatti
+        probabilita_risultati = {}
+        quote_risultati = {}
+
+         # Applica un fattore di correzione per risultati più realistici
+        # Risultati storici mostrano che lo 0-0 è più comune di quanto predetto da Poisson puro
+        fattore_correzione = {
+            "0-0": 1.8,  # Aumenta probabilità di 0-0
+            "1-0": 1.5, "0-1": 1.5,  # Aumenta probabilità di 1-0 e 0-1
+            "1-1": 1.6,  # Aumenta probabilità di 1-1
+            "2-0": 1.4, "0-2": 1.4,  # Aumenta probabilità di 2-0 e 0-2
+            "2-1": 1.5, "1-2": 1.5,  # Aumenta probabilità di 2-1 e 1-2
+            "3-0": 1.3, "0-3": 1.3,  # Aumenta probabilità di 3-0 e 0-3
+            "3-1": 1.3, "1-3": 1.3,  # Aumenta probabilità di 3-1 e 1-3
+            "2-2": 1.4,  # Aumenta probabilità di 2-2
+        }
+        
+        # Calcola le probabilità per ogni combinazione di risultato esatto
+        # considerando il limite di 6 azioni totali
+        somma_probabilita = 0
+        
+        # Applica un fattore di "appiattimento" per rendere i risultati più equilibrati
+        fattore_appiattimento = 0.5  # Più basso = quote più vicine tra loro
+        
+        for gol_totali in range(self.NUM_AZIONI_MAX +1):
+            # Probabilità di avere esattamente gol_totali gol nella partita
+            media_gol_totali = min(forza_totale, 3.5)  # Ridotto per abbassare le quote
+            prob_gol_totali = np.exp(-media_gol_totali) * (media_gol_totali ** gol_totali) / math.factorial(gol_totali)
+            
+            for gol_casa in range(gol_totali + 1):
+                gol_trasferta = gol_totali - gol_casa
+                
+                # Se ci sono gol, distribuisci in base alla forza relativa
+                if gol_totali > 0:
+                    # Applica il fattore di appiattimento per rendere le distribuzioni più uniformi
+                    prob_casa_modificata = (forza_casa / forza_totale) ** fattore_appiattimento
+                    prob_trasferta_modificata = (forza_trasferta / forza_totale) ** fattore_appiattimento
+                    
+                    # Normalizza
+                    somma_modificata = prob_casa_modificata + prob_trasferta_modificata
+                    prob_casa_modificata /= somma_modificata
+                    prob_trasferta_modificata /= somma_modificata
+                    
+                    prob_distribuzione = math.comb(gol_totali, gol_casa) * (prob_casa_modificata ** gol_casa) * (prob_trasferta_modificata ** gol_trasferta)
+                else:
+                    prob_distribuzione = 1.0  # Caso 0-0
+                
+                # Probabilità combinata con un boost per i risultati più comuni
+                prob_risultato = prob_gol_totali * prob_distribuzione
+                
+                # Boost ai risultati più comuni (0-0, 1-0, 0-1, 1-1, 2-1, 1-2)
+                #if (gol_casa <= 2 and gol_trasferta <= 2):
+                    #prob_risultato *= 1.3
+                
+                # Memorizza la probabilità
+                risultato_chiave = f"{gol_casa}-{gol_trasferta}"
+                probabilita_risultati[risultato_chiave] = prob_risultato
+                somma_probabilita += prob_risultato
+        
+        # Normalizza le probabilità per assicurarsi che sommino a 1
+        for risultato, prob in probabilita_risultati.items():
+            prob_normalizzata = prob / somma_probabilita
+            """
+            # Aggiungi un margine variabile in base al tipo di risultato
+            if risultato == "0-0":
+                # Margine ridotto per 0-0, quota target 8-12
+                margine = self.margine_operatore * 0.3
+                quota = 1 / (prob_normalizzata / (1 + margine))
+                quota = min(max(quota, 8.0), 12.0)  # Forza nel range 8-12
+            
+            elif risultato in ["5-0", "0-5", "5-1", "1-5", "4-0", "0-4"]:
+                # Risultati rari, quota target 50-150
+                margine = self.margine_operatore * 0.5
+                quota = 1 / (prob_normalizzata / (1 + margine))
+                #quota = min(max(quota, 50.0), 250.0)  # Forza nel range 50-150
+            
+            elif risultato in ["6-0", "0-6"]:
+                # Risultati molto rari, quota target <250
+                margine = self.margine_operatore * 0.7
+                quota = 1 / (prob_normalizzata / (1 + margine))
+                quota = min(quota, 250.0)  # Max 250
+            
+            else:
+            """ 
+                # Per altri risultati, usa una formula basata sulla frequenza
+            gol_totali = sum(map(int, risultato.split('-'))) if risultato != "Altro" else 10
+            
+            # Calcola un margine variabile (più alto per risultati con più gol)
+            margine_base = self.margine_operatore * 0.6
+            margine_variabile = margine_base * (1 + (gol_totali / 10))
+            quota = 1 / (prob_normalizzata / (1 + margine_variabile))
+                
+                # Limita le quote per evitare valori estremi
+            fattori_personalizzati = {
+                "5-1": 0.8,  # Riduce del 30%
+                "1-5": 0.8,  # Riduce del 30%
+                "5-0": 0.85,  # Riduce del 30%
+                "0-5": 0.85,  # Riduce del 30%
+                "6-0": 0.8,  # Riduce del 20%
+                "0-6": 0.8   # Riduce del 20%
+            }
+
+            quote_risultati[risultato] = round(quota, 2)
+            
+            for risultato, fattore in fattori_personalizzati.items():
+                if risultato in quote_risultati:
+                    quote_risultati[risultato] = round(quote_risultati[risultato] * fattore, 2)
+                    
+                    # Arrotonda a 2 decimali
+            
+    
+        return quote_risultati
+
     def simula_partita(self, id_casa, id_trasferta):
         """
         Simula il risultato di una partita
@@ -262,7 +408,7 @@ class GeneratoreQuoteCalcioVirtuale:
         
         return (gol_casa, gol_trasferta)
     
-    def genera_calendario_virtuale(self, num_partite=10):
+    def genera_calendario_virtuale(self, num_partite=NUM_PARTITE):
         """
         Genera un calendario di partite virtuali
         
@@ -286,6 +432,7 @@ class GeneratoreQuoteCalcioVirtuale:
             quote_1x2 = self.calcola_quote_1x2(probabilita_1x2)
             quote_under_over = self.calcola_quote_under_over(id_casa, id_trasferta)
             quote_goal_nogoal = self.calcola_quote_goal_nogoal(id_casa, id_trasferta)
+            quote_risultati_esatti = self.calcola_quote_risultato_esatto(id_casa, id_trasferta)
             
             # Orario della partita (ogni 3 minuti per le scommesse virtuali)
             orario = ora_base + timedelta(minutes=3*i)
@@ -303,7 +450,8 @@ class GeneratoreQuoteCalcioVirtuale:
                 'quota_under': quote_under_over['Under 2.5'],
                 'quota_over': quote_under_over['Over 2.5'],
                 'quota_goal': quote_goal_nogoal['Goal'],
-                'quota_nogoal': quote_goal_nogoal['NoGoal']
+                'quota_nogoal': quote_goal_nogoal['NoGoal'],
+                'quote_risultati_esatti': quote_risultati_esatti  # Aggiungi le quote dei risultati esatti
             }
             
             partite.append(partita)
@@ -340,6 +488,13 @@ class GeneratoreQuoteCalcioVirtuale:
             
             # Determina Goal/NoGoal
             risultati.at[index, 'goal_nogoal'] = 'Goal' if (gol_casa > 0 and gol_trasferta > 0) else 'NoGoal'
+            
+            # Determina il risultato esatto
+            max_gol = 6  # Stesso valore usato in calcola_quote_risultato_esatto
+            if gol_casa <= max_gol and gol_trasferta <= max_gol:
+                risultati.at[index, 'risultato_esatto'] = f"{gol_casa}-{gol_trasferta}"
+            else:
+                risultati.at[index, 'risultato_esatto'] = "Altro"
         
         return risultati
 
@@ -351,30 +506,51 @@ if __name__ == "__main__":
     
     # Mostra informazioni sulle squadre
     print("CAMPIONATO VIRTUALE - SQUADRE:")
-    print(generatore.squadre_virtuali[['nome', 'attacco', 'difesa', 'forma']])
+    #print(generatore.squadre_virtuali[['nome', 'attacco', 'difesa', 'forma']])
     print("\n")
     
     # Genera un calendario di partite virtuali
-    calendario = generatore.genera_calendario_virtuale(num_partite=5)
+    calendario = generatore.genera_calendario_virtuale(num_partite=NUM_PARTITE)
     
     print("CALENDARIO PARTITE VIRTUALI:")
-    print(calendario[['id', 'data_ora', 'squadra_casa', 'squadra_trasferta', 
-                     'quota_1', 'quota_X', 'quota_2']].to_string(index=False))
+    #print(calendario[['id', 'data_ora', 'squadra_casa', 'squadra_trasferta', 
+    #                 'quota_1', 'quota_X', 'quota_2']].to_string(index=False))
     print("\n")
     
     # Mostra quote aggiuntive per la prima partita
-    print(f"QUOTE DETTAGLIATE - {calendario.at[0, 'squadra_casa']} vs {calendario.at[0, 'squadra_trasferta']}:")
-    print(f"1X2: 1={calendario.at[0, 'quota_1']}, X={calendario.at[0, 'quota_X']}, 2={calendario.at[0, 'quota_2']}")
-    print(f"Under/Over 2.5: Under={calendario.at[0, 'quota_under']}, Over={calendario.at[0, 'quota_over']}")
-    print(f"Goal/NoGoal: Goal={calendario.at[0, 'quota_goal']}, NoGoal={calendario.at[0, 'quota_nogoal']}")
+    partita_esempio = 0  # Indice della prima partita
+    print(f"QUOTE DETTAGLIATE - {calendario.at[partita_esempio, 'squadra_casa']} vs {calendario.at[partita_esempio, 'squadra_trasferta']}:")
+    print(f"1X2: 1={calendario.at[partita_esempio, 'quota_1']}, X={calendario.at[partita_esempio, 'quota_X']}, 2={calendario.at[partita_esempio, 'quota_2']}")
+    print(f"Under/Over 2.5: Under={calendario.at[partita_esempio, 'quota_under']}, Over={calendario.at[partita_esempio, 'quota_over']}")
+    print(f"Goal/NoGoal: Goal={calendario.at[partita_esempio, 'quota_goal']}, NoGoal={calendario.at[partita_esempio, 'quota_nogoal']}")
+    
+    # Mostra quote risultati esatti
+    print("\nQUOTE RISULTATI ESATTI:")
+    quote_esatte = calendario.at[partita_esempio, 'quote_risultati_esatti']
+    sorted_quote = sorted(quote_esatte.items(), key=lambda x: x[1])  # Ordina per quota crescente
+    
+    # Dividi i risultati in colonne per una visualizzazione migliore
+    num_risultati = len(sorted_quote)
+    colonne = 5
+    risultati_per_colonna = (num_risultati + colonne - 1) // colonne
+    
+    for i in range(risultati_per_colonna):
+        riga = ""
+        for j in range(colonne):
+            idx = i + j * risultati_per_colonna
+            if idx < num_risultati:
+                risultato, quota = sorted_quote[idx]
+                riga += f"{risultato}: {quota:.2f}\t"
+        print(riga)
+    
     print("\n")
     
     # Simula i risultati
     risultati = generatore.simula_giornata_completa(calendario)
     
     print("RISULTATI SIMULATI:")
-    print(risultati[['id', 'squadra_casa', 'squadra_trasferta', 'gol_casa', 'gol_trasferta', 
-                    'risultato', 'under_over', 'goal_nogoal']].to_string(index=False))
+    #print(risultati[['id', 'squadra_casa', 'squadra_trasferta', 'gol_casa', 'gol_trasferta', 
+    #                'risultato', 'under_over', 'goal_nogoal', 'risultato_esatto']].to_string(index=False))
     print("\n")
     
     # Calcola payout percentuale medio
@@ -382,3 +558,30 @@ if __name__ == "__main__":
     payout_medio = payout_1x2.mean()
     print(f"Payout percentuale medio (1X2): {payout_medio*100:.2f}%")
     print(f"Margine operatore: {generatore.margine_operatore*100:.2f}%")
+    
+    # Aggiungi analisi delle vincite
+    print("\nANALISI DELLE VINCITE:")
+    
+    # Conta i risultati 1X2
+    conteggio_1x2 = risultati['risultato'].value_counts()
+    print("Distribuzione risultati 1X2:")
+    for risultato, count in conteggio_1x2.items():
+        print(f"{risultato}: {count} partite ({count/len(risultati)*100:.1f}%)")
+    
+    # Conta Over/Under
+    conteggio_ou = risultati['under_over'].value_counts()
+    print("\nDistribuzione Under/Over:")
+    for risultato, count in conteggio_ou.items():
+        print(f"{risultato}: {count} partite ({count/len(risultati)*100:.1f}%)")
+    
+    # Conta Goal/NoGoal
+    conteggio_gng = risultati['goal_nogoal'].value_counts()
+    print("\nDistribuzione Goal/NoGoal:")
+    for risultato, count in conteggio_gng.items():
+        print(f"{risultato}: {count} partite ({count/len(risultati)*100:.1f}%)")
+    
+    # Conta risultati esatti
+    conteggio_esatti = risultati['risultato_esatto'].value_counts()
+    print("\nDistribuzione risultati esatti:")
+    for risultato, count in conteggio_esatti.items():
+        print(f"{risultato}: {count} partite ({count/len(risultati)*100:.1f}%)")
